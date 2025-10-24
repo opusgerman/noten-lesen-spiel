@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Notenlesen-Spiel</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    canvas { border: 1px solid #000; background: #fff; margin-bottom: 10px; transition: background 0.3s; }
+    button { margin: 5px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    button.selected { background-color: lightblue; }
+    #score { font-weight: bold; margin: 10px; }
+    .group { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>Notenlesen-Spiel</h1>
+
+  <div id="menu">
+    <div class="group">
+      <p>Schlüssel wählen:</p>
+      <button class="clef-btn" data-clef="treble">Violinschlüssel</button>
+      <button class="clef-btn" data-clef="bass">Bassschlüssel</button>
+    </div>
+
+    <div class="group">
+      <p>Schwierigkeit wählen:</p>
+      <button class="diff-btn" data-diff="easy">Leicht</button>
+      <button class="diff-btn" data-diff="medium">Mittel</button>
+      <button class="diff-btn" data-diff="hard">Schwer</button>
+    </div>
+
+    <div class="group">
+      <button id="start-btn">Spiel starten</button>
+    </div>
+  </div>
+
+  <div id="game" style="display:none;">
+    <canvas id="staff" width="400" height="400"></canvas>
+    <div id="choices"></div>
+    <div id="score">Punktzahl: 0</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('staff');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+
+    let score = 0;
+    let currentNote = null;
+    let clef = null;
+    let difficulty = null;
+
+    const NOTE_NAMES = ['C','D','E','F','G','A','H'];
+    const stepMap = { C:0, D:1, E:2, F:3, G:4, A:5, H:6 };
+
+    // 기준 (Treble: E4=1선=240, Bass: G2=1선=240)
+    const reference = {
+      treble: { note: 'E', octave: 4, y: 240 },
+      bass:   { note: 'G', octave: 2, y: 240 }
+    };
+
+    function diatonicIndex(name, octave){
+      return octave*7 + stepMap[name];
+    }
+
+    // y좌표 계산 (한 음 = 5px)
+    function getYPos(name, octave, clef){
+      const ref = reference[clef];
+      const diffSteps = diatonicIndex(name, octave) - diatonicIndex(ref.note, ref.octave);
+      return ref.y - diffSteps*5;
+    }
+
+    function generateNotes(clef, difficulty){
+      const res=[];
+      let minOct=2, maxOct=6;
+      if (difficulty==='easy'){
+        minOct = (clef==='treble')?4:2;
+        maxOct = (clef==='treble')?5:3;
+      } else if (difficulty==='medium'){
+        minOct = (clef==='treble')?4:2;
+        maxOct = (clef==='treble')?6:4;
+      }
+      for (let o=minOct;o<=maxOct;o++){
+        for (const n of NOTE_NAMES){
+          res.push({ name:n, octave:o, y:getYPos(n,o,clef) });
+        }
+      }
+      return res;
+    }
+
+    let notes = { treble:[], bass:[] };
+
+    // 🔊 버튼 클릭 소리
+    function playClickSound(){
+      const aCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = aCtx.createOscillator();
+      const gain = aCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 600;
+      gain.gain.value = 0.2;
+      osc.connect(gain);
+      gain.connect(aCtx.destination);
+      osc.start();
+      osc.stop(aCtx.currentTime + 0.15);
+    }
+
+    // Clef 버튼 이벤트
+    document.querySelectorAll('.clef-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        clef = btn.dataset.clef;
+        document.querySelectorAll('.clef-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        playClickSound();
+      });
+    });
+
+    // Difficulty 버튼 이벤트
+    document.querySelectorAll('.diff-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        difficulty = btn.dataset.diff;
+        document.querySelectorAll('.diff-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        playClickSound();
+      });
+    });
+
+    // Start 버튼 이벤트
+    document.getElementById('start-btn').addEventListener('click', ()=>{
+      playClickSound();
+      startGame();
+    });
+
+    function startGame(){
+      if (!clef || !difficulty){
+        alert("Bitte Schlüssel und Schwierigkeit wählen!");
+        return;
+      }
+      document.getElementById('menu').style.display='none';
+      document.getElementById('game').style.display='block';
+      notes[clef] = generateNotes(clef, difficulty);
+      score=0;
+      scoreEl.textContent='Punktzahl: 0';
+      nextNote();
+    }
+
+    function drawStaff(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.strokeStyle='#000';
+      const bottom = reference[clef].y;
+      const top = bottom - 40;
+
+      for (let i=0;i<5;i++){
+        const y = top + i*10;
+        ctx.beginPath();
+        ctx.moveTo(40,y);
+        ctx.lineTo(380,y);
+        ctx.stroke();
+      }
+
+      ctx.font="50px serif";
+      ctx.textBaseline="middle";
+      ctx.textAlign="left";
+      if (clef==='treble'){
+        ctx.fillText("\uD834\uDD1E",5,bottom-20); // 𝄞
+      }else{
+        ctx.fillText("\uD834\uDD22",5,bottom-30); // 𝄢
+      }
+    }
+
+    function drawLedgerLines(y){
+      const bottom=reference[clef].y;
+      const top=bottom-40;
+      if (y<top){
+        for (let ly=top-5; ly>=y; ly-=5){
+          if (((top-ly)/5)%2===0){
+            ctx.beginPath(); ctx.moveTo(180,ly); ctx.lineTo(220,ly); ctx.stroke();
+          }
+        }
+      }
+      if (y>bottom){
+        for (let ly=bottom+5; ly<=y; ly+=5){
+          if (((ly-top)/5)%2===0){
+            ctx.beginPath(); ctx.moveTo(180,ly); ctx.lineTo(220,ly); ctx.stroke();
+          }
+        }
+      }
+    }
+
+    function drawNote(note){
+      drawLedgerLines(note.y);
+      ctx.beginPath();
+      ctx.arc(200,note.y,7,0,Math.PI*2);
+      ctx.fillStyle='black'; ctx.fill();
+    }
+
+    function nextNote(){
+      drawStaff();
+      const list=notes[clef];
+      currentNote=list[Math.floor(Math.random()*list.length)];
+      drawNote(currentNote);
+      showChoices();
+    }
+
+    function showChoices(){
+      const choicesDiv=document.getElementById('choices');
+      choicesDiv.innerHTML='';
+      NOTE_NAMES.forEach(name=>{
+        const btn=document.createElement('button');
+        btn.textContent=name;
+        btn.onclick=()=>checkAnswer(name);
+        choicesDiv.appendChild(btn);
+      });
+    }
+
+    // ✅ 정답 = "딩동댕" 멜로디, 오답 = 하강음
+    function playFeedback(correct){
+      const aCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      if (correct){
+        const notes = [800, 1000, 1200]; // Hz
+        notes.forEach((freq, i)=>{
+          const osc = aCtx.createOscillator();
+          const gain = aCtx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          gain.gain.value = 0.2;
+          osc.connect(gain);
+          gain.connect(aCtx.destination);
+          const start = aCtx.currentTime + i*0.15;
+          const end = start + 0.15;
+          osc.start(start);
+          osc.stop(end);
+        });
+      } else {
+        const osc = aCtx.createOscillator();
+        const gain = aCtx.createGain();
+        osc.type = "square";
+        gain.gain.value = 0.2;
+        osc.connect(gain);
+        gain.connect(aCtx.destination);
+        osc.frequency.setValueAtTime(300, aCtx.currentTime);
+        osc.frequency.linearRampToValueAtTime(120, aCtx.currentTime+0.4);
+        osc.start();
+        osc.stop(aCtx.currentTime+0.5);
+      }
+    }
+
+    function flashColor(color){
+      canvas.style.background=color;
+      setTimeout(()=>canvas.style.background='#fff',300);
+    }
+
+    function checkAnswer(clicked){
+      if (clicked===currentNote.name){
+        score++; flashColor('lightgreen'); playFeedback(true);
+      }else{
+        flashColor('salmon'); playFeedback(false);
+      }
+      scoreEl.textContent='Punktzahl: '+score;
+      setTimeout(nextNote,600);
+    }
+  </script>
+</body>
+</html>
